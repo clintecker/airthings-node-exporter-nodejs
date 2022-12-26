@@ -27,12 +27,6 @@ if (!config.cacheLatestSamplesFor) {
 }
 
 const cacheLatestSamplesForMs = parseInt(config.cacheLatestSamplesFor, 10) * 1000;
-
-console.log(`Client ID: ${config.clientId}`);
-console.log(`Client Scope: ${config.scope}`);
-console.log(`Persisting Token to: ${config.persistAccesstokenPath}`);
-console.log(`Persisting Latest Samples to: ${config.persistLatestSamples} for ${cacheLatestSamplesForMs} milliseconds.`);
-
 const clientConfiguration = {
   client: {
     id: config.clientId,
@@ -43,8 +37,6 @@ const clientConfiguration = {
     tokenPath: 'https://accounts-api.airthings.com/v1/token',
   },
 };
-
-const client = new ClientCredentials(clientConfiguration);
 
 const persistAccessToken = async (accessToken) => {
   const accessTokenJson = JSON.stringify(accessToken, null, 2);
@@ -186,10 +178,10 @@ const metricToString = (detector) =>
   ([metricName, metricValue]) =>
     `airthings_${metricName}{device_id="${detector.id}",device_location="${detector.location.name}",device_segment="${detector.segment.name}"} ${metricValue}`;
 
-const refreshMetrics = async (accessToken, cachedLatestSamples) => {
+const refreshMetrics = async (accessToken, cachedLatestSamples, client) => {
   const latestSamples = cloneDeep(cachedLatestSamples);
   // Enumerate Devices
-  const { devices } = await getData('devices', accessToken);
+  const { devices } = await getData('devices', accessToken, client);
   // Filter out Hubs and Decorate Data
   const detectors = devices.filter(deviceIsNotAHub).reduce(
     (accumulator, device) => ({
@@ -225,7 +217,7 @@ const refreshMetrics = async (accessToken, cachedLatestSamples) => {
   return latestSamples;
 };
 
-const getMetrics = async () => {
+const getMetrics = async (client) => {
   let useCache = false;
   let cachedLatestSamples = {};
 
@@ -252,7 +244,7 @@ const getMetrics = async () => {
   }
   if (!useCache) {
     // Trigger Refresh of Metrics
-    cachedLatestSamples = await refreshMetrics(accessToken, cachedLatestSamples);
+    cachedLatestSamples = await refreshMetrics(accessToken, cachedLatestSamples, client);
   } else {
     console.log('Using cached latest samples');
   }
@@ -274,9 +266,9 @@ const onConnectionError = ({ err, remoteAddress }) => {
   console.error(`Connection ${remoteAddress} error: ${err.message}`);
 };
 
-const onConnectionData = ({ remoteAddress, connection }) => {
+const onConnectionData = ({ remoteAddress, connection, client }) => {
   console.log(`Connection ${remoteAddress} asking for data`); try {
-    getMetrics().then((metrics) => {
+    getMetrics(client).then((metrics) => {
       connection.write('HTTP/1.1 200 OK\n');
       connection.write('Content-Type: text/plain\n');
       connection.write('Connection: close\n\n');
@@ -289,17 +281,26 @@ const onConnectionData = ({ remoteAddress, connection }) => {
   }
 };
 
-const handleConnection = (connection) => {
+const handleConnection = (connection, client) => {
   const remoteAddress = `${connection.remoteAddress}:${connection.remotePort}`;
   console.log(`New client connection from ${remoteAddress}`);
   connection.setEncoding('utf8');
-  connection.on('data', (data) => onConnectionData({ data, remoteAddress, connection }));
+  connection.on('data', (data) => onConnectionData({ data, remoteAddress, connection, client }));
   connection.once('close', () => onConnectionClose({ remoteAddress }));
   connection.on('error', (err) => onConnectionError({ err, remoteAddress }));
-
 };
-const server = net.createServer();
-server.on('connection', handleConnection);
-server.listen(config.listenPort, '0.0.0.0', () => {
-  console.debug(`Server listening on ${server.address().address}:${config.listenPort}`);
-});
+
+const main = () => {
+  console.debug(`Client ID: ${config.clientId}`);
+  console.debug(`Client Scope: ${config.scope}`);
+  console.debug(`Persisting Token to: ${config.persistAccesstokenPath}`);
+  console.debug(`Persisting Latest Samples to: ${config.persistLatestSamples} for ${cacheLatestSamplesForMs} milliseconds.`);
+  const client = new ClientCredentials(clientConfiguration);
+  const server = net.createServer();
+  server.on('connection', (connection) => handleConnection(connection, client));
+  server.listen(config.listenPort, '0.0.0.0', () => {
+    console.debug(`Server listening on ${server.address().address}:${config.listenPort}`);
+  });
+}
+
+main();
