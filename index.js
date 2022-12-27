@@ -26,6 +26,15 @@ if (!config.cacheLatestSamplesFor) {
   throw new Error('Airthings latest samples cache time is missing');
 }
 
+const logLevels = {
+  trace: 0,
+  debug: 10,
+  info: 20,
+  log: 20,
+  warn: 30,
+  error: 40,
+};
+
 const cacheLatestSamplesForMs = parseInt(config.cacheLatestSamplesFor, 10) * 1000;
 const clientConfiguration = {
   client: {
@@ -38,9 +47,16 @@ const clientConfiguration = {
   },
 };
 
+const log = (level, message, ...args) => {
+  const logLevelLimitName = process.env.LOG_LEVEL || 'debug';
+  if (logLevels[level] >= logLevels[logLevelLimitName.toLowerCase()]) {
+    console[level](`[${(Date.now() / 1000.0).toFixed(3)}] [${level.toUpperCase()}] ${message}`, ...args);
+  }
+};
+
 const persistAccessToken = async (accessToken) => {
   const accessTokenJson = JSON.stringify(accessToken, null, 2);
-  console.debug('Caching access token');
+  log('debug', 'Caching access token');
   try {
     fs.writeFileSync(config.persistAccesstokenPath, accessTokenJson, {
       encoding: 'utf8',
@@ -48,7 +64,7 @@ const persistAccessToken = async (accessToken) => {
       flag: 'w',
     });
   } catch (error) {
-    console.log('Error persisting access token', error.message);
+    log('log', 'Error persisting access token', error.message);
   }
 };
 
@@ -61,7 +77,7 @@ const getPersistedAccesstoken = async () => {
     });
     accessToken = JSON.parse(accessTokenJson);
   } catch (error) {
-    console.log('Error reading access token', error.message);
+    log('error', 'Error reading access token', error.message);
     return null;
   }
   return accessToken;
@@ -72,7 +88,7 @@ const persistLatestSamples = async (latestSamples) => {
     persistedAt: new Date(),
     samples: latestSamples,
   }, null, 2);
-  console.debug('Caching latest samples');
+  log('debug', 'Caching latest samples');
   try {
     fs.writeFileSync(config.persistLatestSamples, latestSamplesJson, {
       encoding: 'utf8',
@@ -80,13 +96,13 @@ const persistLatestSamples = async (latestSamples) => {
       flag: 'w',
     });
   } catch (error) {
-    console.log('Error persisting latest samples', error.message);
+    log('error', 'Error persisting latest samples', error.message);
   }
 };
 
 const getPersistedLatestSamples = async () => {
   let latestSamples;
-  console.debug('Fetching cached samples');
+  log('debug', 'Fetching cached samples');
   try {
     const latestSamplesJson = fs.readFileSync(config.persistLatestSamples, {
       encoding: 'utf8',
@@ -94,13 +110,13 @@ const getPersistedLatestSamples = async () => {
     });
     latestSamples = JSON.parse(latestSamplesJson);
   } catch (error) {
-    console.log('Error reading latest samples', error.message);
+    log('error', 'Error reading latest samples', error.message);
     return null;
   }
   return latestSamples;
 };
 
-const fetchNewToken = async () => {
+const fetchNewToken = async (client) => {
   const tokenParams = {
     scope: config.scope,
   };
@@ -108,48 +124,47 @@ const fetchNewToken = async () => {
   try {
     accessToken = await client.getToken(tokenParams);
   } catch (error) {
-    console.log('Access Token error', error.message);
-    console.log(error);
+    log('error', 'Access Token error', error.message);
   }
   return accessToken;
 };
 
-const login = async () => {
+const login = async (client) => {
   const accessTokenJSONString = await getPersistedAccesstoken();
   let accessToken;
   if (accessTokenJSONString) {
-    console.debug('Found cached token.');
+    log('debug', 'Found cached token.');
     accessToken = client.createToken(accessTokenJSONString);
   } else {
-    console.debug('No cached token, fetching fetch token');
+    log('debug', 'No cached token, fetching fresh token');
     accessToken = await fetchNewToken();
     await persistAccessToken(accessToken);
   }
   return accessToken;
 };
 
-const ensureFreshToken = async (accessToken) => {
+const ensureFreshToken = async (accessToken, client) => {
   let newAccessToken = accessToken;
   if (accessToken.expired()) {
     try {
-      newAccessToken = await fetchNewToken();
+      newAccessToken = await fetchNewToken(client);
       await persistAccessToken(newAccessToken);
     } catch (error) {
-      console.log('Error refreshing token: ', error.message);
+      log('error', 'Error refreshing token: ', error.message);
       throw new Error(`Error refreshing token: ${error.message}`);
     }
   }
   return newAccessToken;
 };
 
-const getData = async (resourcePath, accessToken) => {
-  const freshAccessToken = await ensureFreshToken(accessToken);
+const getData = async (resourcePath, accessToken, client) => {
+  const freshAccessToken = await ensureFreshToken(accessToken, client);
   let payload;
   try {
     const options = {
       headers: { Authorization: freshAccessToken.token.access_token },
     };
-    console.debug(
+    log('debug',
       `Making request to https://ext-api.airthings.com/v1/${resourcePath}`,
     );
     const response = await Wreck.get(
@@ -158,7 +173,7 @@ const getData = async (resourcePath, accessToken) => {
     );
     payload = response.payload;
   } catch (error) {
-    console.error('Error fetching data', error.message);
+    log('error', 'Error fetching data', error.message);
     return null;
   }
   return JSON.parse(payload.toString());
@@ -192,9 +207,9 @@ const refreshMetrics = async (accessToken, cachedLatestSamples, client) => {
   );
 
   // Debugging Data
-  console.log(`Found ${devices.length} devices`);
-  console.log(` - ${Object.keys(detectors).length} detectors`);
-  console.log(` - ${devices.length - Object.keys(detectors).length} hubs`);
+  log('debug', `Found ${devices.length} devices`);
+  log('debug', ` - ${Object.keys(detectors).length} detectors`);
+  log('debug', ` - ${devices.length - Object.keys(detectors).length} hubs`);
   // Fetch the latest samples for each detector and store on the detector.
   const detectorSamples = await Promise.all(Object.values(detectors).map(
     async (detector) => {
@@ -222,31 +237,31 @@ const getMetrics = async (client) => {
   let cachedLatestSamples = {};
 
   // Obtain Access Token
-  const accessToken = await login();
+  const accessToken = await login(client);
   const persistedSamplesResponse = await getPersistedLatestSamples();
   if (persistedSamplesResponse) {
-    console.debug('Found cached latest samples');
+    log('debug', 'Found cached latest samples');
     const { persistedAt } = persistedSamplesResponse;
     if (persistedAt) {
       const latestSamplesCacheAge = new Date() - Date.parse(persistedAt);
       cachedLatestSamples = persistedSamplesResponse.samples;
       if (latestSamplesCacheAge && latestSamplesCacheAge <= cacheLatestSamplesForMs) {
-        console.debug(`Cached samples are ${latestSamplesCacheAge}ms old, within cache window of ${cacheLatestSamplesForMs}ms`);
+        log('debug', `Cached samples are ${latestSamplesCacheAge}ms old, within cache window of ${cacheLatestSamplesForMs}ms`);
         useCache = true;
       } else {
-        console.debug(`Cached samples are ${latestSamplesCacheAge}ms old, outside cache window of ${cacheLatestSamplesForMs}ms`);
+        log('debug', `Cached samples are ${latestSamplesCacheAge}ms old, outside cache window of ${cacheLatestSamplesForMs}ms`);
       }
     } else {
-      console.debug('Persisted samples don\'t have a timestamp.')
+      log('warn', 'Persisted samples don\'t have a timestamp.');
     }
   } else {
-    console.debug('No cached latest samples');
+    log('debug', 'No cached latest samples');
   }
   if (!useCache) {
     // Trigger Refresh of Metrics
     cachedLatestSamples = await refreshMetrics(accessToken, cachedLatestSamples, client);
   } else {
-    console.log('Using cached latest samples');
+    log('debug', 'Using cached latest samples');
   }
   // Produce node metrics.
   const metrics = Object.entries(cachedLatestSamples).reduce((acc, [, detector]) => {
@@ -258,16 +273,19 @@ const getMetrics = async (client) => {
   return metrics;
 };
 
-const onConnectionClose = ({ remoteAddress }) => {
-  console.log(`Connection from ${remoteAddress} closed`);
+const onConnectionClose = ({ remoteAddress, connectionTimeout }) => {
+  log('info', `Connection from ${remoteAddress} closed`);
+  clearTimeout(connectionTimeout);
 };
 
 const onConnectionError = ({ err, remoteAddress }) => {
-  console.error(`Connection ${remoteAddress} error: ${err.message}`);
+  log('debug', `Connection ${remoteAddress} error: ${err.message} `);
 };
 
-const onConnectionData = ({ remoteAddress, connection, client }) => {
-  console.log(`Connection ${remoteAddress} asking for data`); try {
+const onConnectionData = ({ remoteAddress, connection, client, connectionTimeout }) => {
+  log('debug', `Connection ${remoteAddress} asking for data`);
+  clearTimeout(connectionTimeout)
+  try {
     getMetrics(client).then((metrics) => {
       connection.write('HTTP/1.1 200 OK\n');
       connection.write('Content-Type: text/plain\n');
@@ -276,31 +294,39 @@ const onConnectionData = ({ remoteAddress, connection, client }) => {
       connection.end();
     });
   } catch (error) {
-    console.error('Error fetching metrics', error.message);
+    log('error', 'Error fetching metrics', error.message);
     connection.end();
   }
 };
 
 const handleConnection = (connection, client) => {
   const remoteAddress = `${connection.remoteAddress}:${connection.remotePort}`;
-  console.log(`New client connection from ${remoteAddress}`);
+  log('info', `New connection from ${remoteAddress}`);
+
+  const connectionTimeout = setTimeout(() => {
+    log('info', `Closing idle connection from ${remoteAddress}`);
+    connection.end();
+  }, 1000);
+
   connection.setEncoding('utf8');
-  connection.on('data', (data) => onConnectionData({ data, remoteAddress, connection, client }));
-  connection.once('close', () => onConnectionClose({ remoteAddress }));
+  connection.on('data', (data) => onConnectionData({
+    data, remoteAddress, connection, client, connectionTimeout
+  }));
+  connection.once('close', () => onConnectionClose({ remoteAddress, connectionTimeout }));
   connection.on('error', (err) => onConnectionError({ err, remoteAddress }));
 };
 
 const main = () => {
-  console.debug(`Client ID: ${config.clientId}`);
-  console.debug(`Client Scope: ${config.scope}`);
-  console.debug(`Persisting Token to: ${config.persistAccesstokenPath}`);
-  console.debug(`Persisting Latest Samples to: ${config.persistLatestSamples} for ${cacheLatestSamplesForMs} milliseconds.`);
+  log('debug', `Client ID: ${config.clientId}`);
+  log('debug', `Client Scope: ${config.scope}`);
+  log('debug', `Persisting Token to: ${config.persistAccesstokenPath}`);
+  log('debug', `Persisting Latest Samples to: ${config.persistLatestSamples} for ${cacheLatestSamplesForMs} milliseconds.`);
   const client = new ClientCredentials(clientConfiguration);
   const server = net.createServer();
   server.on('connection', (connection) => handleConnection(connection, client));
   server.listen(config.listenPort, '0.0.0.0', () => {
-    console.debug(`Server listening on ${server.address().address}:${config.listenPort}`);
+    log('debug', `Server listening on ${server.address().address}: ${config.listenPort}`);
   });
-}
+};
 
 main();
