@@ -210,23 +210,28 @@ const refreshMetrics = async (accessToken, cachedLatestSamples, client) => {
   log('debug', `Found ${devices.length} devices`);
   log('debug', ` - ${Object.keys(detectors).length} detectors`);
   log('debug', ` - ${devices.length - Object.keys(detectors).length} hubs`);
+
   // Fetch the latest samples for each detector and store on the detector.
-  const detectorSamples = await Promise.all(Object.values(detectors).map(
-    async (detector) => {
-      const devicePayload = await getData(
-        `devices/${detector.id}/latest-samples`,
-        accessToken,
-      );
-      if (devicePayload) {
-        return [detector.id, { ...devicePayload.data, time: new Date(parseInt(devicePayload.data.time, 10) * 1000.0) }];
-      }
-      return null;
-    },
-  ));
-  // Overwrite cached values with fresh values if we got them.
-  detectorSamples.forEach(([id, samples]) => {
-    latestSamples[id] = { ...detectors[id], latestSamples: samples };
-  });
+  try {
+    const detectorSamples = await Promise.all(Object.values(detectors).map(
+      async (detector) => {
+        const devicePayload = await getData(
+          `devices/${detector.id}/latest-samples`,
+          accessToken,
+        );
+        if (devicePayload) {
+          return [detector.id, { ...devicePayload.data, time: new Date(parseInt(devicePayload.data.time, 10) * 1000.0) }];
+        }
+        return null;
+      },
+    ));
+    // Overwrite cached values with fresh values if we got them.
+    detectorSamples.forEach(([id, samples]) => {
+      latestSamples[id] = { ...detectors[id], latestSamples: samples };
+    });
+  } catch (error) {
+    log('error', 'Error fetching latest samples', error.message);
+  }
   // Cache latest samples.
   await persistLatestSamples(latestSamples);
   return latestSamples;
