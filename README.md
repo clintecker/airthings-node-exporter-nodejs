@@ -18,3 +18,5 @@ CACHE_LATEST_SAMPLES_FOR=300 \
 LISTEN_PORT=9099 \
   node index.js
 ```
+
+Once you've got your server running you can point prometheus at the IP of the machine running the server on the port you selected.
