@@ -7,7 +7,17 @@ const { cloneDeep } = require('lodash');
 const fs = require('fs');
 const { ClientCredentials } = require('simple-oauth2');
 const Wreck = require('@hapi/wreck');
-const config = require('./config');
+
+const config = {
+  clientId: process.env.AIRTHINGS_CLIENT_ID,
+  clientSecret: process.env.AIRTHINGS_CLIENT_SECRET,
+  persistAccesstokenPath: process.env.ACCESS_TOKEN_PATH,
+  scope: process.env.AIRTHINGS_CLIENT_SCOPE,
+  persistLatestSamples: process.env.LATEST_SAMPLES_PATH,
+  cacheLatestSamplesFor: process.env.CACHE_LATEST_SAMPLES_FOR,
+  listenPort: process.env.LISTEN_PORT,
+  logLevel: process.env.LOG_LEVEL || 'info',
+};
 
 const notMetrics = ['time', 'relayDeviceType'];
 
@@ -81,7 +91,7 @@ const getPersistedAccesstoken = async () => {
     });
     accessToken = JSON.parse(accessTokenJson);
   } catch (error) {
-    log('error', 'Error reading access token', error.message);
+    log('warn', 'Error reading access token', error.message);
     return null;
   }
   return accessToken;
@@ -114,7 +124,7 @@ const getPersistedLatestSamples = async () => {
     });
     latestSamples = JSON.parse(latestSamplesJson);
   } catch (error) {
-    log('error', 'Error reading latest samples', error.message);
+    log('warn', 'Error reading latest samples', error.message);
     return null;
   }
   return latestSamples;
