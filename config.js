@@ -6,4 +6,5 @@ module.exports = {
   persistLatestSamples: process.env.LATEST_SAMPLES_PATH,
   cacheLatestSamplesFor: process.env.CACHE_LATEST_SAMPLES_FOR,
   listenPort: process.env.LISTEN_PORT,
+  logLevel: process.env.LOG_LEVEL || 'info',
 };

@@ -1,3 +1,7 @@
+/**
+ * TODO: Could query slightly more often if we use the detector ids from the
+ *       cached samples.
+ */
 const net = require('net');
 const { cloneDeep } = require('lodash');
 const fs = require('fs');
@@ -48,7 +52,7 @@ const clientConfiguration = {
 };
 
 const log = (level, message, ...args) => {
-  const logLevelLimitName = process.env.LOG_LEVEL || 'debug';
+  const logLevelLimitName = config.logLevel;
   if (logLevels[level] >= logLevels[logLevelLimitName.toLowerCase()]) {
     console[level](`[${(Date.now() / 1000.0).toFixed(3)}] [${level.toUpperCase()}] ${message}`, ...args);
   }
@@ -125,6 +129,7 @@ const fetchNewToken = async (client) => {
     accessToken = await client.getToken(tokenParams);
   } catch (error) {
     log('error', 'Access Token error', error.message);
+    throw error;
   }
   return accessToken;
 };
@@ -196,7 +201,12 @@ const metricToString = (detector) =>
 const refreshMetrics = async (accessToken, cachedLatestSamples, client) => {
   const latestSamples = cloneDeep(cachedLatestSamples);
   // Enumerate Devices
-  const { devices } = await getData('devices', accessToken, client);
+  const devicesPayload = await getData('devices', accessToken, client);
+  if (!devicesPayload) {
+    log('error', 'Error fetching devices');
+    return latestSamples;
+  }
+  const { devices } = devicesPayload;
   // Filter out Hubs and Decorate Data
   const detectors = devices.filter(deviceIsNotAHub).reduce(
     (accumulator, device) => ({
@@ -222,13 +232,16 @@ const refreshMetrics = async (accessToken, cachedLatestSamples, client) => {
         if (devicePayload) {
           return [detector.id, { ...devicePayload.data, time: new Date(parseInt(devicePayload.data.time, 10) * 1000.0) }];
         }
-        return null;
+        return [null, null];
       },
     ));
+    // log('debug', `Detector samples: ${JSON.stringify(detectorSamples, null, 2)}`)
     // Overwrite cached values with fresh values if we got them.
-    detectorSamples.forEach(([id, samples]) => {
-      latestSamples[id] = { ...detectors[id], latestSamples: samples };
-    });
+    detectorSamples
+      .filter(([id, samples]) => id !== null && samples !== null)
+      .forEach(([id, samples]) => {
+        latestSamples[id] = { ...detectors[id], latestSamples: samples };
+      });
   } catch (error) {
     log('error', 'Error fetching latest samples', error.message);
   }
@@ -268,6 +281,7 @@ const getMetrics = async (client) => {
   } else {
     log('debug', 'Using cached latest samples');
   }
+  // log('debug', `cachedLatestSamples ${JSON.stringify(cachedLatestSamples, null, 2)}`)
   // Produce node metrics.
   const metrics = Object.entries(cachedLatestSamples).reduce((acc, [, detector]) => {
     const metricLines = Object.entries(detector.latestSamples)
@@ -330,7 +344,7 @@ const main = () => {
   const server = net.createServer();
   server.on('connection', (connection) => handleConnection(connection, client));
   server.listen(config.listenPort, '0.0.0.0', () => {
-    log('debug', `Server listening on ${server.address().address}: ${config.listenPort}`);
+    log('info', `Server listening on ${server.address().address}:${config.listenPort}`);
   });
 };
 
