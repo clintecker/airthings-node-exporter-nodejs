@@ -142,7 +142,7 @@ const login = async (client) => {
     accessToken = client.createToken(accessTokenJSONString);
   } else {
     log('debug', 'No cached token, fetching fresh token');
-    accessToken = await fetchNewToken();
+    accessToken = await fetchNewToken(client);
     await persistAccessToken(accessToken);
   }
   return accessToken;
